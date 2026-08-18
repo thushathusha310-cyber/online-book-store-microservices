@@ -1,0 +1,136 @@
+services:
+  order-db:
+    image: postgres:17-alpine
+    container_name: bookstore-order-db
+    environment:
+      POSTGRES_DB: orderdb
+      POSTGRES_USER: orderuser
+      POSTGRES_PASSWORD: "${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}"
+    ports:
+      - "5435:5432"
+    volumes:
+      - order-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orderuser -d orderdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    networks:
+      - bookstore-network
+
+  payment-db:
+    image: postgres:17-alpine
+    container_name: bookstore-payment-db
+    environment:
+      POSTGRES_DB: paymentdb
+      POSTGRES_USER: paymentuser
+      POSTGRES_PASSWORD: "${PAYMENT_DB_PASSWORD:?Set PAYMENT_DB_PASSWORD in .env}"
+    ports:
+      - "5436:5432"
+    volumes:
+      - payment-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paymentuser -d paymentdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    networks:
+      - bookstore-network
+
+  order-service:
+    build: ./member2/order-service
+    container_name: bookstore-order-service
+    environment:
+      DB_URL: jdbc:postgresql://order-db:5432/orderdb
+      DB_USERNAME: orderuser
+      DB_PASSWORD: "${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}"
+      SERVICE_API_KEY: "${ORDER_SERVICE_API_KEY:?Set ORDER_SERVICE_API_KEY in .env}"
+    ports:
+      - "8083:8083"
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks:
+      - bookstore-network
+
+  payment-service:
+    build: ./member2/payment-service
+    container_name: bookstore-payment-service
+    environment:
+      DB_URL: jdbc:postgresql://payment-db:5432/paymentdb
+      DB_USERNAME: paymentuser
+      DB_PASSWORD: "${PAYMENT_DB_PASSWORD:?Set PAYMENT_DB_PASSWORD in .env}"
+      SERVICE_API_KEY: "${PAYMENT_SERVICE_API_KEY:?Set PAYMENT_SERVICE_API_KEY in .env}"
+      ORDER_SERVICE_URL: http://order-service:8083
+      ORDER_SERVICE_API_KEY: "${ORDER_SERVICE_API_KEY:?Set ORDER_SERVICE_API_KEY in .env}"
+    ports:
+      - "8084:8084"
+    depends_on:
+      payment-db:
+        condition: service_healthy
+      order-service:
+        condition: service_started
+    networks:
+      - bookstore-network
+
+  redis:
+    image: redis:8-alpine
+    container_name: bookstore-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - bookstore-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.1
+    container_name: bookstore-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN_USERNAME:?Set KEYCLOAK_ADMIN_USERNAME in .env}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}"
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./keycloak/bookstore-realm.json:/opt/keycloak/data/import/bookstore-realm.json:ro
+    networks:
+      - bookstore-network
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: bookstore-api-gateway
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_ISSUER_URI: http://localhost:8180/realms/bookstore
+      JWT_JWK_SET_URI: http://keycloak:8080/realms/bookstore/protocol/openid-connect/certs
+      ORDER_SERVICE_URL: http://order-service:8083
+      PAYMENT_SERVICE_URL: http://payment-service:8084
+      ORDER_SERVICE_API_KEY: "${ORDER_SERVICE_API_KEY:?Set ORDER_SERVICE_API_KEY in .env}"
+      PAYMENT_SERVICE_API_KEY: "${PAYMENT_SERVICE_API_KEY:?Set PAYMENT_SERVICE_API_KEY in .env}"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - keycloak
+      - order-service
+      - payment-service
+    networks:
+      - bookstore-network
+
+  frontend:
+    build: ./frontend
+    container_name: bookstore-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - bookstore-network
+
+volumes:
+  order-data:
+  payment-data:
+
+networks:
+  bookstore-network:
+    driver: bridge
