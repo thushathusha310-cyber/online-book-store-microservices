@@ -1,4 +1,42 @@
 services:
+  book-service:
+    build:
+      context: ../thusha/book-service
+      dockerfile: Dockerfile
+    container_name: bookstore-book-service
+    environment:
+      SERVER_PORT: 8081
+      SPRING_MONGODB_URI: mongodb://mongodb:27017/bookdb
+    depends_on:
+      - mongodb
+    ports:
+      - "8081:8081"
+    networks:
+      - bookstore-network
+
+  user-service:
+    build:
+      context: ../thusha/user-service
+      dockerfile: Dockerfile
+    container_name: bookstore-user-service
+    environment:
+      SERVER_PORT: 8082
+      SPRING_MONGODB_URI: mongodb://mongodb:27017/userdb
+    depends_on:
+      - mongodb
+    ports:
+      - "8082:8082"
+    networks:
+      - bookstore-network
+
+  mongodb:
+    image: mongo:7
+    container_name: bookstore-mongodb
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - bookstore-network
+
   order-db:
     image: postgres:17-alpine
     container_name: bookstore-order-db
@@ -130,6 +168,8 @@ services:
 volumes:
   order-data:
   payment-data:
+  mongo-data:
+  
 
 networks:
   bookstore-network:
